@@ -2,6 +2,7 @@
 #include <string.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <stdint.h>
 
 #include "activation_layer.h"
 #include "logistic_layer.h"
@@ -1218,7 +1219,7 @@ void load_weights_upto(network *net, char *filename, int start, int cutoff)
     fread(&minor, sizeof(int), 1, fp);
     fread(&revision, sizeof(int), 1, fp);
     if ((major*10 + minor) >= 2 && major < 1000 && minor < 1000){
-        fread(net->seen, sizeof(size_t), 1, fp);
+        fread(net->seen, sizeof(uint64_t), 1, fp);
     } else {
         int iseen = 0;
         fread(&iseen, sizeof(int), 1, fp);

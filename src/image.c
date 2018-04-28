@@ -668,7 +668,9 @@ int fill_image_from_stream(CvCapture *cap, image im)
     rgbgr_image(im);
     return 1;
 }
+#endif
 
+#ifdef OPENCV
 void save_image_jpg(image p, const char *name)
 {
     image copy = copy_image(p);
@@ -691,7 +693,56 @@ void save_image_jpg(image p, const char *name)
     cvReleaseImage(&disp);
     free_image(copy);
 }
+#else
+void save_image_jpg(image im, const char* name) {
+    char buff[256];
+    // sprintf(buff, "%s (%d)", name, windows);
+    sprintf(buff, "%s.jpg", name);
+    unsigned char* data = calloc(im.w * im.h * im.c, sizeof(char));
+    int i, k;
+    for (k = 0; k < im.c; ++k) {
+        for (i = 0; i < im.w * im.h; ++i) {
+            data[i * im.c + k] =
+                (unsigned char) (255 * im.data[i + k * im.w * im.h]);
+        }
+    }
+    int success = stbi_write_jpg(buff, im.w, im.h, im.c, data, 0);
+    free(data);
+    if (!success)
+        fprintf(stderr, "Failed to write image %s\n", buff);
+}
 #endif
+
+typedef struct Context {
+    void* buf;
+    int size;
+} Context;
+
+void stb_write_fn(void *context, void *data, int size)
+{
+    Context* p_context = (Context *) context;
+    memcpy(p_context->buf + p_context->size, data, size);
+    p_context->size += size;
+}
+
+int encode_image_jpg(image im, unsigned char* const buf)
+{
+    Context context;
+    context.buf = (void*) buf;
+    context.size = 0;
+    unsigned char *data = calloc(im.w*im.h*im.c, sizeof(char));
+    int i,k;
+    for(k = 0; k < im.c; ++k){
+        for(i = 0; i < im.w*im.h; ++i){
+            data[i*im.c+k] = (unsigned char) (255*im.data[i + k*im.w*im.h]);
+        }
+    }
+    int success = stbi_write_jpg_to_func(stb_write_fn, (void*) &context, im.w,
+                                         im.h, im.c, data, 0);
+    free(data);
+    if(!success) fprintf(stderr, "Failed to encode image\n");
+    return context.size;
+}
 
 void save_image_png(image im, const char *name)
 {
@@ -1558,6 +1609,30 @@ image load_image_stb_thread(char *filename, int channels, pthreadpool_t threadpo
 	return im;
 }
 #endif
+
+image decode_image_jpg(const unsigned char* const buf, int len, int channels)
+{
+    int w, h, c;
+    unsigned char *data = stbi_load_from_memory(buf, len, &w, &h, &c, channels);
+    if (!data) {
+        fprintf(stderr, "Cannot load image from memory %p, %d\nSTB Reason: %s\n", buf, len, stbi_failure_reason());
+        exit(0);
+    }
+    if(channels) c = channels;
+    int i,j,k;
+    image im = make_image(w, h, c);
+    for(k = 0; k < c; ++k){
+        for(j = 0; j < h; ++j){
+            for(i = 0; i < w; ++i){
+                int dst_index = i + w*j + w*h*k;
+                int src_index = k + c*i + c*w*j;
+                im.data[dst_index] = (float)data[src_index]/255.;
+            }
+        }
+    }
+    free(data);
+    return im;
+}
 
 image load_image_stb(char *filename, int channels)
 {
