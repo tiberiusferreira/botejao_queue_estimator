@@ -86,7 +86,7 @@ DEPS = $(wildcard src/*.h) Makefile include/darknet.h
 all: obj  results $(SLIB) $(ALIB) $(EXEC)
 
 install: $(ALIB) $(SLIB)
-       sudo cp $(ALIB) $(SLIB) /usr/local/lib
+	sudo cp $(ALIB) $(SLIB) /usr/local/lib
 
 $(EXEC): $(EXECOBJ) $(ALIB)
 	$(CC) $(COMMON) $(CFLAGS) $^ -o $@ $(LDFLAGS) $(ALIB)
