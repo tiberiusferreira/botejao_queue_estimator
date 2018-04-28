@@ -1,8 +1,8 @@
 GPU=0
 CUDNN=0
 OPENCV=0
-NNPACK=1
-ARM_NEON=1
+NNPACK=0
+ARM_NEON=0
 OPENMP=0
 DEBUG=0
 
@@ -85,6 +85,8 @@ DEPS = $(wildcard src/*.h) Makefile include/darknet.h
 #all: obj backup results $(SLIB) $(ALIB) $(EXEC)
 all: obj  results $(SLIB) $(ALIB) $(EXEC)
 
+install: $(ALIB) $(SLIB)
+       sudo cp $(ALIB) $(SLIB) /usr/local/lib
 
 $(EXEC): $(EXECOBJ) $(ALIB)
 	$(CC) $(COMMON) $(CFLAGS) $^ -o $@ $(LDFLAGS) $(ALIB)
