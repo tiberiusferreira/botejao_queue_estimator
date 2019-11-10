@@ -23,7 +23,7 @@ fn main() {
     gen();
 
     println!("cargo:rustc-link-lib=darknet");
-
+    println!("cargo:rustc-link-search=./");
     if cfg!(feature = "nnpack") {
         println!("cargo:rustc-link-lib=nnpack");
         println!("cargo:rustc-link-lib=pthreadpool");

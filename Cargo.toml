@@ -2,9 +2,12 @@
 name = "darknet"
 version = "0.1.0"
 authors = ["Ben Zhang <benzh@cs.berkeley.edu>"]
-
+edition="2018"
 [dependencies]
 failure = "0.1"
+imageproc = "*"
+image = "*"
+rocket = {version = "0.4.2", default-features=false}
 
 [build-dependencies]
 bindgen = { version = "0.35", optional = true }
@@ -15,6 +18,7 @@ nnpack = []
 cuda = []
 
 [[bin]]
-name = "main"
+
+name = "botejao_v2_nn"
 doc = false
 path = "src/main.rs"
