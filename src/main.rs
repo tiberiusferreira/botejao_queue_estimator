@@ -2,14 +2,16 @@
 
 extern crate darknet;
 use darknet::*;
+use failure::_core::time::Duration;
 use image::{imageops, ColorType, Rgb, RgbImage};
 use imageproc::geometric_transformations::Interpolation;
 use imageproc::rect::Rect;
+use rocket::State;
+use rocket_contrib::json::Json;
+use serde::Serialize;
 use std::io::{Cursor, Read};
 use std::sync::{Arc, RwLock};
-use rocket::State;
-use serde::Serialize;
-use rocket_contrib::json::Json;
+use std::time::Instant;
 
 #[macro_use]
 extern crate rocket;
@@ -61,21 +63,29 @@ pub fn draw_dets_boxes(dets: Vec<Detection>, image: &mut RgbImage) {
 }
 
 #[derive(Serialize, Clone, Debug)]
-struct BotejaoQueueWatcherResponse{
+struct BotejaoQueueWatcherResponse {
     number_of_people: u32,
-    image_jpg_b64: String
+    image_jpg_b64: String,
 }
 fn run() {
-    let botejao_queue_watcher_response = Arc::new(RwLock::new(BotejaoQueueWatcherResponse{
+    let botejao_queue_watcher_response = Arc::new(RwLock::new(BotejaoQueueWatcherResponse {
         number_of_people: 0,
-        image_jpg_b64: "".to_string()
+        image_jpg_b64: "".to_string(),
     }));
     let response_thread_copy = botejao_queue_watcher_response.clone();
     std::thread::spawn(move || {
         let yolo = YoloNetwork::new();
         let img_url = "https://github.com/tiberiusferreira/botejao_queue_estimator/blob/master/test_full.jpg?raw=true";
+        let mut last_request_instant = Instant::now().checked_sub(Duration::from_secs(60)).unwrap();
+        let period_as_secs = 60;
         loop {
-//            let img_path = "test_full.jpg";
+            //            let img_path = "test_full.jpg";
+            let seconds_til_period =
+                period_as_secs - last_request_instant.elapsed().as_secs() as i64;
+            if seconds_til_period > 0 {
+                println!("Sleeping: {}", seconds_til_period);
+                std::thread::sleep(Duration::from_secs(seconds_til_period as u64));
+            }
             let mut img_from_req = Vec::<u8>::new();
             match reqwest::get(img_url) {
                 Ok(mut img) => {
@@ -86,7 +96,7 @@ fn run() {
                     continue;
                 }
             }
-
+            last_request_instant = Instant::now();
 
             let image_rust_ori = image::load_from_memory(img_from_req.as_slice())
                 .unwrap()
@@ -112,15 +122,19 @@ fn run() {
                 write_lock.image_jpg_b64 = raw_bytes_to_send_as_b64;
                 write_lock.number_of_people = people_dets.len() as u32;
             }
-
         }
     });
 
-    rocket::ignite().manage(botejao_queue_watcher_response).mount("/", routes![index]).launch();
+    rocket::ignite()
+        .manage(botejao_queue_watcher_response)
+        .mount("/", routes![index])
+        .launch();
 }
 
 #[get("/")]
-fn index(cached_response: State<Arc<RwLock<BotejaoQueueWatcherResponse>>>) -> Json<BotejaoQueueWatcherResponse> {
+fn index(
+    cached_response: State<Arc<RwLock<BotejaoQueueWatcherResponse>>>,
+) -> Json<BotejaoQueueWatcherResponse> {
     let response = (*cached_response.read().unwrap()).clone();
     Json(response)
 }
