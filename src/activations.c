@@ -16,6 +16,8 @@ char *get_activation_string(ACTIVATION a)
             return "relu";
         case ELU:
             return "elu";
+        case SELU:
+            return "selu";
         case RELIE:
             return "relie";
         case RAMP:
@@ -43,9 +45,11 @@ char *get_activation_string(ACTIVATION a)
 ACTIVATION get_activation(char *s)
 {
     if (strcmp(s, "logistic")==0) return LOGISTIC;
+    if (strcmp(s, "swish") == 0) return SWISH;
     if (strcmp(s, "loggy")==0) return LOGGY;
     if (strcmp(s, "relu")==0) return RELU;
     if (strcmp(s, "elu")==0) return ELU;
+    if (strcmp(s, "selu") == 0) return SELU;
     if (strcmp(s, "relie")==0) return RELIE;
     if (strcmp(s, "plse")==0) return PLSE;
     if (strcmp(s, "hardtan")==0) return HARDTAN;
@@ -72,6 +76,8 @@ float activate(float x, ACTIVATION a)
             return relu_activate(x);
         case ELU:
             return elu_activate(x);
+        case SELU:
+            return selu_activate(x);
         case RELIE:
             return relie_activate(x);
         case RAMP:
@@ -95,32 +101,37 @@ float activate(float x, ACTIVATION a)
 void activate_array(float *x, const int n, const ACTIVATION a)
 {
     int i;
-    for(i = 0; i < n; ++i){
-        x[i] = activate(x[i], a);
+    if (a == LINEAR) {}
+    else if (a == LEAKY) {
+        #pragma omp parallel for
+        for (i = 0; i < n; ++i) {
+            x[i] = leaky_activate(x[i]);
+        }
+    }
+    else if (a == LOGISTIC) {
+        #pragma omp parallel for
+        for (i = 0; i < n; ++i) {
+            x[i] = logistic_activate(x[i]);
+        }
+    }
+    else {
+        for (i = 0; i < n; ++i) {
+            x[i] = activate(x[i], a);
+        }
     }
 }
 
-#ifdef NNPACK
-struct activate_params {
-	float *x;
-	int n;
-	ACTIVATION a;
-};
-
-void activate_array_compute(struct activate_params *params, size_t c)
+void activate_array_swish(float *x, const int n, float * output_sigmoid, float * output)
 {
-	int i;
-	for (i = 0; i < params->n; i++) {
-		params->x[c*params->n + i] = activate(params->x[c*params->n + i], params->a);
-	}
+    int i;
+    #pragma omp parallel for
+    for (i = 0; i < n; ++i) {
+        float x_val = x[i];
+        float sigmoid = logistic_activate(x_val);
+        output_sigmoid[i] = sigmoid;
+        output[i] = x_val * sigmoid;
+    }
 }
-
-void activate_array_thread(float *x, const int c, const int n, const ACTIVATION a, pthreadpool_t threadpool)
-{
-	struct activate_params params = { x, n, a };
-	pthreadpool_compute_1d(threadpool, (pthreadpool_function_1d_t)activate_array_compute, &params, c);
-}
-#endif
 
 float gradient(float x, ACTIVATION a)
 {
@@ -135,6 +146,8 @@ float gradient(float x, ACTIVATION a)
             return relu_gradient(x);
         case ELU:
             return elu_gradient(x);
+        case SELU:
+            return selu_gradient(x);
         case RELIE:
             return relie_gradient(x);
         case RAMP:
@@ -158,8 +171,19 @@ float gradient(float x, ACTIVATION a)
 void gradient_array(const float *x, const int n, const ACTIVATION a, float *delta)
 {
     int i;
+    #pragma omp parallel for
     for(i = 0; i < n; ++i){
         delta[i] *= gradient(x[i], a);
     }
-} 
+}
 
+// https://github.com/BVLC/caffe/blob/04ab089db018a292ae48d51732dd6c66766b36b6/src/caffe/layers/swish_layer.cpp#L54-L56
+void gradient_array_swish(const float *x, const int n, const float * sigmoid, float * delta)
+{
+    int i;
+    #pragma omp parallel for
+    for (i = 0; i < n; ++i) {
+        float swish = x[i];
+        delta[i] *= swish + sigmoid[i]*(1 - swish);
+    }
+}

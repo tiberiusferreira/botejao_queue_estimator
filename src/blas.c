@@ -6,26 +6,25 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
-#ifdef ARM_NEON
-#include <arm_neon.h>
-#endif
-
-void reorg_cpu(float *x, int w, int h, int c, int batch, int stride, int forward, float *out)
+void reorg_cpu(float *x, int out_w, int out_h, int out_c, int batch, int stride, int forward, float *out)
 {
     int b,i,j,k;
-    int out_c = c/(stride*stride);
+    int in_c = out_c/(stride*stride);
+
+    //printf("\n out_c = %d, out_w = %d, out_h = %d, stride = %d, forward = %d \n", out_c, out_w, out_h, stride, forward);
+    //printf("  in_c = %d,  in_w = %d,  in_h = %d \n", in_c, out_w*stride, out_h*stride);
 
     for(b = 0; b < batch; ++b){
-        for(k = 0; k < c; ++k){
-            for(j = 0; j < h; ++j){
-                for(i = 0; i < w; ++i){
-                    int in_index  = i + w*(j + h*(k + c*b));
-                    int c2 = k % out_c;
-                    int offset = k / out_c;
+        for(k = 0; k < out_c; ++k){
+            for(j = 0; j < out_h; ++j){
+                for(i = 0; i < out_w; ++i){
+                    int in_index  = i + out_w*(j + out_h*(k + out_c*b));
+                    int c2 = k % in_c;
+                    int offset = k / in_c;
                     int w2 = i*stride + offset % stride;
                     int h2 = j*stride + offset / stride;
-                    int out_index = w2 + w*stride*(h2 + h*stride*(c2 + out_c*b));
-                    if(forward) out[out_index] = x[in_index];
+                    int out_index = w2 + out_w*stride*(h2 + out_h*stride*(c2 + in_c*b));
+                    if(forward) out[out_index] = x[in_index];    // used by default for forward (i.e. forward = 0)
                     else out[in_index] = x[out_index];
                 }
             }
@@ -35,7 +34,7 @@ void reorg_cpu(float *x, int w, int h, int c, int batch, int stride, int forward
 
 void flatten(float *x, int size, int layers, int batch, int forward)
 {
-    float *swap = calloc(size*layers*batch, sizeof(float));
+    float* swap = (float*)calloc(size * layers * batch, sizeof(float));
     int i,c,b;
     for(b = 0; b < batch; ++b){
         for(c = 0; c < layers; ++c){
@@ -69,7 +68,7 @@ void weighted_delta_cpu(float *a, float *b, float *s, float *da, float *db, floa
     }
 }
 
-void shortcut_cpu(int batch, int w1, int h1, int c1, float *add, int w2, int h2, int c2, float s1, float s2, float *out)
+void shortcut_cpu(int batch, int w1, int h1, int c1, float *add, int w2, int h2, int c2, float *out)
 {
     int stride = w1/w2;
     int sample = w2/w1;
@@ -88,7 +87,7 @@ void shortcut_cpu(int batch, int w1, int h1, int c1, float *add, int w2, int h2,
                 for(i = 0; i < minw; ++i){
                     int out_index = i*sample + w2*(j*sample + h2*(k + c2*b));
                     int add_index = i*stride + w1*(j*stride + h1*(k + c1*b));
-                    out[out_index] = s1*out[out_index] + s2*add[add_index];
+                    out[out_index] += add[add_index];
                 }
             }
         }
@@ -126,27 +125,6 @@ void variance_cpu(float *x, float *mean, int batch, int filters, int spatial, fl
         variance[i] *= scale;
     }
 }
-
-void l2normalize_cpu(float *x, float *dx, int batch, int filters, int spatial)
-{
-    int b,f,i;
-    for(b = 0; b < batch; ++b){
-        for(i = 0; i < spatial; ++i){
-            float sum = 0;
-            for(f = 0; f < filters; ++f){
-                int index = b*filters*spatial + f*spatial + i;
-                sum += powf(x[index], 2);
-            }
-            sum = sqrtf(sum);
-            for(f = 0; f < filters; ++f){
-                int index = b*filters*spatial + f*spatial + i;
-                x[index] /= sum;
-                dx[index] = (1 - x[index]) / sum;
-            }
-        }
-    }
-}
-
 
 void normalize_cpu(float *x, float *mean, float *variance, int batch, int filters, int spatial)
 {
@@ -187,21 +165,25 @@ void axpy_cpu(int N, float ALPHA, float *X, int INCX, float *Y, int INCY)
 
 void scal_cpu(int N, float ALPHA, float *X, int INCX)
 {
-	int i;
-#ifdef ARM_NEON
-	float32x4_t alpha = vdupq_n_f32(ALPHA);
-	for (i = 0; i < N; i+=4) {
-		vst1q_f32(X + i*INCX, vmulq_f32(vld1q_f32(X + i*INCX), alpha));
-	}
-#else
-	for(i = 0; i < N; ++i) X[i*INCX] *= ALPHA;
-#endif
+    int i;
+    for(i = 0; i < N; ++i) X[i*INCX] *= ALPHA;
+}
+
+void scal_add_cpu(int N, float ALPHA, float BETA, float *X, int INCX)
+{
+    int i;
+    for (i = 0; i < N; ++i) X[i*INCX] = X[i*INCX] * ALPHA + BETA;
 }
 
 void fill_cpu(int N, float ALPHA, float *X, int INCX)
 {
     int i;
-    for(i = 0; i < N; ++i) X[i*INCX] = ALPHA;
+    if (INCX == 1 && ALPHA == 0) {
+        memset(X, 0, N * sizeof(float));
+    }
+    else {
+        for (i = 0; i < N; ++i) X[i*INCX] = ALPHA;
+    }
 }
 
 void deinter_cpu(int NX, float *X, int NY, float *Y, int B, float *OUT)
@@ -258,7 +240,7 @@ void smooth_l1_cpu(int n, float *pred, float *truth, float *delta, float *error)
         }
         else {
             error[i] = 2*abs_val - 1;
-            delta[i] = (diff < 0) ? 1 : -1;
+            delta[i] = (diff > 0) ? 1 : -1;
         }
     }
 }
@@ -313,7 +295,7 @@ float dot_cpu(int N, float *X, int INCX, float *Y, int INCY)
     return dot;
 }
 
-void softmax(float *input, int n, float temp, int stride, float *output)
+void softmax(float *input, int n, float temp, float *output, int stride)
 {
     int i;
     float sum = 0;
@@ -337,7 +319,7 @@ void softmax_cpu(float *input, int n, int batch, int batch_offset, int groups, i
     int g, b;
     for(b = 0; b < batch; ++b){
         for(g = 0; g < groups; ++g){
-            softmax(input + b*batch_offset + g*group_offset, n, temp, stride, output + b*batch_offset + g*group_offset);
+            softmax(input + b*batch_offset + g*group_offset, n, temp, output + b*batch_offset + g*group_offset, stride);
         }
     }
 }
@@ -345,13 +327,13 @@ void softmax_cpu(float *input, int n, int batch, int batch_offset, int groups, i
 void upsample_cpu(float *in, int w, int h, int c, int batch, int stride, int forward, float scale, float *out)
 {
     int i, j, k, b;
-    for(b = 0; b < batch; ++b){
-        for(k = 0; k < c; ++k){
-            for(j = 0; j < h*stride; ++j){
-                for(i = 0; i < w*stride; ++i){
-                    int in_index = b*w*h*c + k*w*h + (j/stride)*w + i/stride;
+    for (b = 0; b < batch; ++b) {
+        for (k = 0; k < c; ++k) {
+            for (j = 0; j < h*stride; ++j) {
+                for (i = 0; i < w*stride; ++i) {
+                    int in_index = b*w*h*c + k*w*h + (j / stride)*w + i / stride;
                     int out_index = b*w*h*c*stride*stride + k*w*h*stride*stride + j*w*stride + i;
-                    if(forward) out[out_index] = scale*in[in_index];
+                    if (forward) out[out_index] = scale*in[in_index];
                     else in[in_index] += scale*out[out_index];
                 }
             }
@@ -360,3 +342,20 @@ void upsample_cpu(float *in, int w, int h, int c, int batch, int stride, int for
 }
 
 
+void constrain_cpu(int size, float ALPHA, float *X)
+{
+    int i;
+    for (i = 0; i < size; ++i) {
+        X[i] = fminf(ALPHA, fmaxf(-ALPHA, X[i]));
+    }
+}
+
+void fix_nan_and_inf_cpu(float *input, size_t size)
+{
+    int i;
+    for (i = 0; i < size; ++i) {
+        float val = input[i];
+        if (isnan(val) || isinf(val))
+            input[i] = 1.0f / i;  // pseudo random value
+    }
+}
