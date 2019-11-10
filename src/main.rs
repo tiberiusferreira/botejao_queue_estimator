@@ -2,16 +2,17 @@
 
 extern crate darknet;
 use darknet::*;
-use image::{imageops, ColorType, Pixel, Rgb, RgbImage};
+use image::{imageops, ColorType, Rgb, RgbImage};
 use imageproc::geometric_transformations::Interpolation;
 use imageproc::rect::Rect;
-use imageproc::rect::Region;
-use std::fs::File;
-use std::io::{Cursor, Write};
-use std::process::exit;
-use std::time::Instant;
+use std::io::{Cursor, Read};
+use std::sync::{Arc, RwLock};
+use rocket::State;
+use serde::Serialize;
+use rocket_contrib::json::Json;
 
-#[macro_use] extern crate rocket;
+#[macro_use]
+extern crate rocket;
 fn main() {
     run();
 }
@@ -59,16 +60,36 @@ pub fn draw_dets_boxes(dets: Vec<Detection>, image: &mut RgbImage) {
     }
 }
 
+#[derive(Serialize, Clone, Debug)]
+struct BotejaoQueueWatcherResponse{
+    number_of_people: u32,
+    image_jpg_b64: String
+}
 fn run() {
-    let yolo = YoloNetwork::new();
-
-
-    std::thread::spawn(||{
+    let botejao_queue_watcher_response = Arc::new(RwLock::new(BotejaoQueueWatcherResponse{
+        number_of_people: 0,
+        image_jpg_b64: "".to_string()
+    }));
+    let response_thread_copy = botejao_queue_watcher_response.clone();
+    std::thread::spawn(move || {
+        let yolo = YoloNetwork::new();
+        let img_url = "https://github.com/tiberiusferreira/botejao_queue_estimator/blob/master/test_full.jpg?raw=true";
         loop {
-            let img_path = "test_full.jpg";
+//            let img_path = "test_full.jpg";
+            let mut img_from_req = Vec::<u8>::new();
+            match reqwest::get(img_url) {
+                Ok(mut img) => {
+                    img.read_to_end(&mut img_from_req).unwrap();
+                }
+                Err(e) => {
+                    println!("{}", e.to_string());
+                    continue;
+                }
+            }
 
-            let image_rust_ori = image::open(img_path)
-                .expect("No image found at provided path")
+
+            let image_rust_ori = image::load_from_memory(img_from_req.as_slice())
+                .unwrap()
                 .to_rgb();
             let temp_img_filename = "rotated_and_cropped_img.png";
             let mut processed_img = rotate_and_crop(image_rust_ori);
@@ -77,28 +98,31 @@ fn run() {
             let image = Image::load(temp_img_filename).unwrap();
             let dets = yolo.detect(&image);
             let people_dets = filter_only_people_in_queue_area(dets);
-            draw_dets_boxes(people_dets, &mut processed_img);
+            draw_dets_boxes(people_dets.clone(), &mut processed_img);
             let mut c = Cursor::new(Vec::new());
             let (width, height) = processed_img.dimensions();
             image::jpeg::JPEGEncoder::new(&mut c)
                 .encode(&*processed_img, width, height, ColorType::RGB(8))
                 .unwrap();
             c.set_position(0);
-            let raw_bytes_to_send = c.into_inner().as_slice();
-            processed_img.save("out.png").unwrap();
+            {
+                let mut write_lock = response_thread_copy.write().unwrap();
+                let raw_bytes_to_send = c.into_inner();
+                let raw_bytes_to_send_as_b64 = base64::encode(&raw_bytes_to_send);
+                write_lock.image_jpg_b64 = raw_bytes_to_send_as_b64;
+                write_lock.number_of_people = people_dets.len() as u32;
+            }
+
         }
     });
-    // would receive from network here
 
-
-    rocket::ignite().mount("/", routes![index]).launch();
-
+    rocket::ignite().manage(botejao_queue_watcher_response).mount("/", routes![index]).launch();
 }
 
-
 #[get("/")]
-fn index() -> &'static str {
-    "Hello, world!"
+fn index(cached_response: State<Arc<RwLock<BotejaoQueueWatcherResponse>>>) -> Json<BotejaoQueueWatcherResponse> {
+    let response = (*cached_response.read().unwrap()).clone();
+    Json(response)
 }
 
 //#[cfg(feature = "nnpack")]
