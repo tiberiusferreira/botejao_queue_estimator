@@ -1,164 +1,146 @@
-#![feature(proc_macro_hygiene, decl_macro)]
+// The pre-trained weights can be downloaded here:
+//   https://github.com/LaurentMazare/ocaml-torch/releases/download/v0.1-unstable/yolo-v3.ot
+#[macro_use]
+extern crate failure;
+extern crate tch;
 
-extern crate darknet;
-use darknet::*;
-use failure::_core::time::Duration;
-use image::{imageops, ColorType, Rgb, RgbImage};
-use imageproc::geometric_transformations::Interpolation;
-use imageproc::rect::Rect;
-use rocket::State;
-use rocket_contrib::json::Json;
-use serde::Serialize;
-use std::io::{Cursor, Read};
-use std::sync::{Arc, RwLock};
+mod coco_classes;
+mod darknet;
+
+use tch::nn::ModuleT;
+use tch::vision::image;
+use tch::Tensor;
 use std::time::Instant;
 
-#[macro_use]
-extern crate rocket;
-fn main() {
-    run();
+const CONFIG_NAME: &'static str = "yolo-v3.cfg";
+const CONFIDENCE_THRESHOLD: f64 = 0.5;
+const NMS_THRESHOLD: f64 = 0.4;
+
+#[derive(Debug, Clone, Copy)]
+struct Bbox {
+    xmin: f64,
+    ymin: f64,
+    xmax: f64,
+    ymax: f64,
+    confidence: f64,
+    class_index: usize,
+    class_confidence: f64,
 }
 
-pub fn rotate_and_crop(image: image::RgbImage) -> image::RgbImage {
-    let mut image_rust = imageproc::geometric_transformations::rotate_about_center(
-        &image,
-        0.3,
-        Interpolation::Nearest,
-        image::Rgb([0u8, 0u8, 0u8]),
-    );
-    let sub_img = imageops::crop(&mut image_rust, 400, 0, 1080, 1080);
-    sub_img.to_image()
+// Intersection over union of two bounding boxes.
+fn iou(b1: &Bbox, b2: &Bbox) -> f64 {
+    let b1_area = (b1.xmax - b1.xmin + 1.) * (b1.ymax - b1.ymin + 1.);
+    let b2_area = (b2.xmax - b2.xmin + 1.) * (b2.ymax - b2.ymin + 1.);
+    let i_xmin = b1.xmin.max(b2.xmin);
+    let i_xmax = b1.xmax.min(b2.xmax);
+    let i_ymin = b1.ymin.max(b2.ymin);
+    let i_ymax = b1.ymax.min(b2.ymax);
+    let i_area = (i_xmax - i_xmin + 1.).max(0.) * (i_ymax - i_ymin + 1.).max(0.);
+    i_area / (b1_area + b2_area - i_area)
 }
 
-pub struct YoloNetwork {
-    network: Network,
-    meta: Meta,
+// Assumes x1 <= x2 and y1 <= y2
+pub fn draw_rect(t: &mut Tensor, x1: i64, x2: i64, y1: i64, y2: i64) {
+    let color = Tensor::of_slice(&[0., 0., 1.]).view([3, 1, 1]);
+    t.narrow(2, x1, x2 - x1)
+        .narrow(1, y1, y2 - y1)
+        .copy_(&color)
 }
 
-impl YoloNetwork {
-    pub fn new() -> Self {
-        let network = Network::new("./yolov3_reduced.cfg", "yolov3.weights").unwrap();
-        let meta = Meta::new("cfg/coco.data").unwrap();
-        YoloNetwork { network, meta }
-    }
-
-    pub fn detect(&self, image: &Image) -> Vec<Detection> {
-        simple_detect(&self.network, &self.meta, image)
-    }
-}
-
-pub fn filter_only_people_in_queue_area(dets: Vec<Detection>) -> Vec<Detection> {
-    return dets
-        .into_iter()
-        .filter(|det| det.class == 0 && det.y < 900.0)
-        .collect();
-}
-
-pub fn draw_dets_boxes(dets: Vec<Detection>, image: &mut RgbImage) {
-    for det in dets {
-        let rect = Rect::at((det.x - det.w / 2.0) as i32, (det.y - det.h / 2.0) as i32)
-            .of_size(det.w as u32, det.h as u32);
-        imageproc::drawing::draw_filled_rect_mut(image, rect, Rgb([255u8, 0u8, 0u8]));
-    }
-}
-
-#[derive(Serialize, Clone, Debug)]
-struct BotejaoQueueWatcherResponse {
-    number_of_people: u32,
-    image_jpg_b64: String,
-}
-fn run() {
-    let botejao_queue_watcher_response = Arc::new(RwLock::new(BotejaoQueueWatcherResponse {
-        number_of_people: 0,
-        image_jpg_b64: "".to_string(),
-    }));
-    let response_thread_copy = botejao_queue_watcher_response.clone();
-    std::thread::spawn(move || {
-        let yolo = YoloNetwork::new();
-        let img_url = "https://webservices.prefeitura.unicamp.br/cameras/cam_ra2.jpg";
-        let mut last_request_instant = Instant::now().checked_sub(Duration::from_secs(60)).unwrap();
-        let period_as_secs = 60;
-        loop {
-            //            let img_path = "test_full.jpg";
-            let seconds_til_period =
-                period_as_secs - last_request_instant.elapsed().as_secs() as i64;
-            if seconds_til_period > 0 {
-                println!("Sleeping: {}", seconds_til_period);
-                std::thread::sleep(Duration::from_secs(seconds_til_period as u64));
-            }
-            let mut img_from_req = Vec::<u8>::new();
-            match reqwest::get(img_url) {
-                Ok(mut img) => {
-                    img.read_to_end(&mut img_from_req).unwrap();
-                }
-                Err(e) => {
-                    println!("{}", e.to_string());
-                    continue;
+pub fn report(pred: &Tensor, img: &Tensor, w: i64, h: i64) -> failure::Fallible<Tensor> {
+    let (npreds, pred_size) = pred.size2()?;
+    let nclasses = (pred_size - 5) as usize;
+    // The bounding boxes grouped by (maximum) class index.
+    let mut bboxes: Vec<Vec<Bbox>> = (0..nclasses).map(|_| vec![]).collect();
+    // Extract the bounding boxes for which confidence is above the threshold.
+    for index in 0..npreds {
+        let pred = Vec::<f64>::from(pred.get(index));
+        let confidence = pred[4];
+        if confidence > CONFIDENCE_THRESHOLD {
+            let mut class_index = 0;
+            for i in 0..nclasses {
+                if pred[5 + i] > pred[5 + class_index] {
+                    class_index = i
                 }
             }
-            last_request_instant = Instant::now();
-
-            let image_rust_ori = image::load_from_memory(img_from_req.as_slice())
-                .unwrap()
-                .to_rgb();
-            let temp_img_filename = "rotated_and_cropped_img.png";
-            let mut processed_img = rotate_and_crop(image_rust_ori);
-            processed_img.save(temp_img_filename).unwrap();
-
-            let image = Image::load(temp_img_filename).unwrap();
-            let dets = yolo.detect(&image);
-            let people_dets = filter_only_people_in_queue_area(dets);
-            draw_dets_boxes(people_dets.clone(), &mut processed_img);
-            let mut c = Cursor::new(Vec::new());
-            let (width, height) = processed_img.dimensions();
-            image::jpeg::JPEGEncoder::new(&mut c)
-                .encode(&*processed_img, width, height, ColorType::RGB(8))
-                .unwrap();
-            c.set_position(0);
-            {
-                let mut write_lock = response_thread_copy.write().unwrap();
-                let raw_bytes_to_send = c.into_inner();
-                let raw_bytes_to_send_as_b64 = base64::encode(&raw_bytes_to_send);
-                write_lock.image_jpg_b64 = raw_bytes_to_send_as_b64;
-                write_lock.number_of_people = people_dets.len() as u32;
+            if pred[class_index + 5] > 0. {
+                let bbox = Bbox {
+                    xmin: pred[0] - pred[2] / 2.,
+                    ymin: pred[1] - pred[3] / 2.,
+                    xmax: pred[0] + pred[2] / 2.,
+                    ymax: pred[1] + pred[3] / 2.,
+                    confidence,
+                    class_index,
+                    class_confidence: pred[5 + class_index],
+                };
+                bboxes[class_index].push(bbox)
             }
         }
-    });
-
-    rocket::ignite()
-        .manage(botejao_queue_watcher_response)
-        .mount("/", routes![index])
-        .launch();
+    }
+    // Perform non-maximum suppression.
+    for bboxes_for_class in bboxes.iter_mut() {
+        bboxes_for_class.sort_by(|b1, b2| b2.confidence.partial_cmp(&b1.confidence).unwrap());
+        let mut current_index = 0;
+        for index in 0..bboxes_for_class.len() {
+            let mut drop = false;
+            for prev_index in 0..current_index {
+                let iou = iou(&bboxes_for_class[prev_index], &bboxes_for_class[index]);
+                if iou > NMS_THRESHOLD {
+                    drop = true;
+                    break;
+                }
+            }
+            if !drop {
+                bboxes_for_class.swap(current_index, index);
+                current_index += 1;
+            }
+        }
+        bboxes_for_class.truncate(current_index);
+    }
+    // Annotate the original image and print boxes information.
+    let (_, initial_h, initial_w) = img.size3()?;
+    let mut img = img.to_kind(tch::Kind::Float) / 255.;
+    let w_ratio = initial_w as f64 / w as f64;
+    let h_ratio = initial_h as f64 / h as f64;
+    for (class_index, bboxes_for_class) in bboxes.iter().enumerate() {
+        for b in bboxes_for_class.iter() {
+            println!("{}: {:?}", coco_classes::NAMES[class_index], b);
+            let xmin = ((b.xmin * w_ratio) as i64).max(0).min(initial_w - 1);
+            let ymin = ((b.ymin * h_ratio) as i64).max(0).min(initial_h - 1);
+            let xmax = ((b.xmax * w_ratio) as i64).max(0).min(initial_w - 1);
+            let ymax = ((b.ymax * h_ratio) as i64).max(0).min(initial_h - 1);
+            draw_rect(&mut img, xmin, xmax, ymin, ymax.min(ymin + 2));
+            draw_rect(&mut img, xmin, xmax, ymin.max(ymax - 2), ymax);
+            draw_rect(&mut img, xmin, xmax.min(xmin + 2), ymin, ymax);
+            draw_rect(&mut img, xmin.max(xmax - 2), xmax, ymin, ymax);
+        }
+    }
+    Ok((img * 255.).to_kind(tch::Kind::Uint8))
 }
 
-#[get("/")]
-fn index(
-    cached_response: State<Arc<RwLock<BotejaoQueueWatcherResponse>>>,
-) -> Json<BotejaoQueueWatcherResponse> {
-    let response = (*cached_response.read().unwrap()).clone();
-    Json(response)
-}
+pub fn main() -> failure::Fallible<()> {
+    let args: Vec<_> = std::env::args().collect();
+    ensure!(args.len() >= 3, "usage: main yolo-v3.ot img.jpg ...");
 
-//#[cfg(feature = "nnpack")]
-//fn run() -> Result<(), Error> {
-//    std::env::set_current_dir("darknet-sys").unwrap();
-//
-//    let mut network = Network::new("yolov3_reduced.cfg", "yolov3.weights")?;
-//    network.create_threadpool(4);
-//    let start = std::time::Instant::now();
-//    let meta = Meta::new("cfg/coco.data")?;
-//    let mut image = Image::load_threaded("data/dog.jpg", network.channel(), &network.threadpool())?;
-//    let dets = simple_detect(&network, &meta, &image);
-//    println!("Took: {} ms", start.elapsed().as_millis());
-//    for d in &dets {
-//        image.draw_box(d, 1, 1.0, 0.0, 0.0);
-//    }
-//    println!("{:?}", dets);
-//
-//    let data = image.encode_jpg();
-//    {
-//        let mut buffer = ::std::fs::File::create("prediction.jpg")?;
-//        buffer.write_all(&data)?;
-//    }
-//    Ok(())
-//}
+
+    // Create the model and load the weights from the file.
+    let mut vs = tch::nn::VarStore::new(tch::Device::Cpu);
+    let darknet = darknet::parse_config(CONFIG_NAME)?;
+    let model = darknet.build_model(&vs.root())?;
+    vs.load(&args[1])?;
+    let start = Instant::now();
+    for (index, image) in args.iter().skip(2).enumerate() {
+        // Load the image file and resize it.
+        let original_image = image::load(image)?;
+        let net_width = darknet.width()?;
+        let net_height = darknet.height()?;
+        let image = image::resize(&original_image, net_width, net_height)?;
+        let image = image.unsqueeze(0).to_kind(tch::Kind::Float) / 255.;
+        let predictions = model.forward_t(&image, false).squeeze();
+        let image = report(&predictions, &original_image, net_width, net_height)?;
+        image::save(&image, format!("output-{:05}.jpg", index))?;
+        println!("Converted {}", index);
+    }
+    println!("Took: {}ms ", start.elapsed().as_millis());
+    Ok(())
+}

@@ -1,28 +1,36 @@
 [package]
-name = "darknet"
+name = "playground"
 version = "0.1.0"
-authors = ["Ben Zhang <benzh@cs.berkeley.edu>"]
-edition="2018"
+authors = ["Tiberio D A R Ferreira <tiberiusferreira@gmail.com>"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
 [dependencies]
-failure = "0.1"
-imageproc = "*"
-image = "*"
-rocket = {version = "0.4.2", default-features=false}
-rocket_contrib = "0.4.2"
-base64 = "0.11.0"
-reqwest = "*"
-serde = {version = "*", features=["derive"]}
-serde_json = "*"
-[build-dependencies]
-bindgen = { version = "0.35", optional = true }
-
-[features]
-gen = [ "bindgen" ]
-nnpack = []
-cuda = []
-
-[[bin]]
-
-name = "botejao_v2_nn"
-doc = false
-path = "src/main.rs"
+#serde = {version = "1.0", features = ["derive"]}
+#serde_json = "*"
+#lopdf = "0.22"
+#pdf-extract = "*"
+failure = "0.1.6"
+#reqwest = {git = "https://github.com/seanmonstar/reqwest.git", features = ["json"]}
+#regex = "1"
+#uuid = { version = "0.7", features = ["serde", "v4"] }
+#nom = "5"
+#strum = "0.15.0"
+#strum_macros = "0.15.0"
+#rhai = {git = "https://github.com/jonathandturner/rhai.git"}
+#tract-tensorflow = "0.5.6"
+#tract-core = "0.5.6"
+tch = {git = "https://github.com/LaurentMazare/tch-rs.git", rev = "3704b1efd992c59f5a8eb76b0a7347a01aedc5ba"}
+#lettre = "0.9"
+#lettre_email = "0.9"
+#bcrypt = "0.4"
+#Inflector = "0.11.4"
+##ocl = "0.19"
+#ws = "*"
+#env_logger = "*"
+#fantoccini = "0.12.0-alpha.1"
+#fantoccini = {path = "../fantoccini"}
+#tokio = "0.2.0-alpha.5"
+#futures-preview = "=0.3.0-alpha.18"
+#base64 = "*"
