@@ -1,5 +1,5 @@
 [package]
-name = "playground"
+name = "darknet-rs"
 version = "0.1.0"
 authors = ["Tiberio D A R Ferreira <tiberiusferreira@gmail.com>"]
 edition = "2018"
@@ -22,6 +22,14 @@ failure = "0.1.6"
 #tract-tensorflow = "0.5.6"
 #tract-core = "0.5.6"
 tch = {git = "https://github.com/LaurentMazare/tch-rs.git", rev = "3704b1efd992c59f5a8eb76b0a7347a01aedc5ba"}
+imageproc = "*"
+image = "*"
+rocket = {version = "0.4.2", default-features=false}
+rocket_contrib = "0.4.2"
+base64 = "0.11.0"
+reqwest = "*"
+serde = {version = "*", features=["derive"]}
+serde_json = "*"
 #lettre = "0.9"
 #lettre_email = "0.9"
 #bcrypt = "0.4"
