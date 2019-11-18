@@ -204,19 +204,12 @@ pub fn rotate_and_crop(image: image::RgbImage) -> image::RgbImage {
 }
 
 pub fn main() -> failure::Fallible<()> {
-//    let args: Vec<_> = std::env::args().collect();
-//    ensure!(args.len() >= 3, "usage: main yolo-v3.ot img.jpg ...");
-
     let botejao_queue_watcher_response = Arc::new(RwLock::new(BotejaoQueueWatcherResponse {
         number_of_people: 0,
         image_jpg_b64: "".to_string(),
     }));
 
     let response_thread_copy = botejao_queue_watcher_response.clone();
-
-
-
-
 
     std::thread::spawn(move || {
         let mut yolo = Yolo::new().unwrap();
@@ -233,7 +226,12 @@ pub fn main() -> failure::Fallible<()> {
                 std::thread::sleep(Duration::from_secs(seconds_til_period as u64));
             }
             let mut img_from_req = Vec::<u8>::new();
-            match reqwest::get(img_url) {
+            match reqwest::Client::builder()
+                .danger_accept_invalid_certs(true)
+                .build()
+                .unwrap()
+                .get(img_url)
+                .send() {
                 Ok(mut img) => {
                     img.read_to_end(&mut img_from_req).unwrap();
                 }
