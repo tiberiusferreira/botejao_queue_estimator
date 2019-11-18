@@ -75,7 +75,7 @@ fn run() {
     let response_thread_copy = botejao_queue_watcher_response.clone();
     std::thread::spawn(move || {
         let yolo = YoloNetwork::new();
-        let img_url = "https://github.com/tiberiusferreira/botejao_queue_estimator/blob/master/test_full.jpg?raw=true";
+        let img_url = "https://webservices.prefeitura.unicamp.br/cameras/cam_ra2.jpg";
         let mut last_request_instant = Instant::now().checked_sub(Duration::from_secs(60)).unwrap();
         let period_as_secs = 60;
         loop {

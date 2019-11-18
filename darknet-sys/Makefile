@@ -4,12 +4,14 @@ CUDNN_HALF=0
 OPENCV=0
 AVX=1
 OPENMP=0
-LIBSO=0
+LIBSO=1
 ZED_CAMERA=0
 
 # set GPU=1 and CUDNN=1 to speedup on GPU
 # set CUDNN_HALF=1 to further speedup 3 x times (Mixed-precision on Tensor Cores) GPU: Volta, Xavier, Turing and higher
 # set AVX=1 and OPENMP=1 to speedup on CPU (if error occurs then set AVX=0)
+
+
 
 DEBUG=0
 
@@ -20,6 +22,8 @@ ARCH= -gencode arch=compute_30,code=sm_30 \
 	  -gencode arch=compute_61,code=[sm_61,compute_61]
 
 OS := $(shell uname)
+
+
 
 # Tesla V100
 # ARCH= -gencode arch=compute_70,code=[sm_70,compute_70]
@@ -46,6 +50,7 @@ OS := $(shell uname)
 VPATH=./src/
 EXEC=darknet
 OBJDIR=./obj/
+
 
 ifeq ($(LIBSO), 1)
 LIBNAMESO=libdarknet.so
