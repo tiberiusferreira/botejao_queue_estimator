@@ -260,14 +260,14 @@ fn index(
     Ok(Json(BotejaoQueueWatcherResponse{
         number_of_people: nb_people,
         image_jpg_b64: raw_bytes_to_send_as_b64,
-        curr_date: date_str
+        last_update: date_str
     }))
 }
 
 #[derive(Serialize, Clone, Debug)]
 struct BotejaoQueueWatcherResponse {
     number_of_people: u32,
-    curr_date: String,
+    last_update: String,
     image_jpg_b64: String,
 }
 
