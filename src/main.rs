@@ -135,11 +135,11 @@ pub fn report(pred: &Tensor, img: &Tensor, w: i64, h: i64) -> failure::Fallible<
     };
 
     // drawing threshold line for where to consider people in the line or in the street
-    for x in 0..=x_dim-1{
-        for width in 0..=3{
-            draw_at_x_y(&mut img, x, max_y_for_given_x_to_consider_people_in_line(x) + width);
-        }
-    }
+//    for x in 0..=x_dim-1{
+//        for width in 0..=3{
+//            draw_at_x_y(&mut img, x, max_y_for_given_x_to_consider_people_in_line(x) + width);
+//        }
+//    }
 
     let w_ratio = initial_w as f64 / w as f64;
     let h_ratio = initial_h as f64 / h as f64;
