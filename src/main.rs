@@ -252,21 +252,22 @@ fn index(
         .read_to_end(&mut processed_jpg)
         .unwrap();
     let raw_bytes_to_send_as_b64 = base64::encode(&processed_jpg);
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let start = SystemTime::now();
-    let since_the_epoch_sec = start.duration_since(UNIX_EPOCH)
-        .expect("Time went backwards").as_secs();
+    use chrono::{DateTime, Local};
+    let now: DateTime<Local> = Local::now();
+
+    let date_str = now.format("%Y:%m:%d %H:%M:%S%:z").to_string();
+
     Ok(Json(BotejaoQueueWatcherResponse{
         number_of_people: nb_people,
         image_jpg_b64: raw_bytes_to_send_as_b64,
-        timestamp: since_the_epoch_sec
+        curr_date: date_str
     }))
 }
 
 #[derive(Serialize, Clone, Debug)]
 struct BotejaoQueueWatcherResponse {
     number_of_people: u32,
-    timestamp: u64,
+    curr_date: String,
     image_jpg_b64: String,
 }
 
@@ -283,81 +284,9 @@ pub fn rotate_and_crop(image: image::RgbImage) -> image::RgbImage {
 
 pub fn main() -> failure::Fallible<()> {
 
-//    let mut img_from_req = Vec::<u8>::new();
-//    File::open("test_modif.jpg").unwrap().read_to_end(&mut img_from_req).unwrap();
-//    let image_rust_ori = image::load_from_memory(img_from_req.as_slice())
-//        .unwrap()
-//        .to_rgb();
-//    let temp_img_filename = "rotated_and_cropped_img.png";
-//    let mut processed_img = rotate_and_crop(image_rust_ori);
-//    processed_img.save(temp_img_filename).unwrap();
-//    yolo.process_img().unwrap();
-
     let yolo = Arc::new(RwLock::new(Yolo::new()
         .expect("Error creating an Yolo instance.")));
-//
-//    let response_thread_copy = botejao_queue_watcher_response.clone();
-//
-//    std::thread::spawn(move || {
-//        let mut yolo = Yolo::new().unwrap();
-//
-//    let img_url = "https://webservices.prefeitura.unicamp.br/cameras/cam_ra.jpg";
-//    let mut last_request_instant = Instant::now().checked_sub(Duration::from_secs(60)).unwrap();
-//    let period_as_secs = 60;
-//    loop {
-////            let img_path = "test_full.jpg";
-//        let seconds_til_period =
-//            period_as_secs - last_request_instant.elapsed().as_secs() as i64;
-//        if seconds_til_period > 0 {
-//            println!("Sleeping: {}", seconds_til_period);
-//            std::thread::sleep(Duration::from_secs(seconds_til_period as u64));
-//        }
-//        let mut img_from_req = Vec::<u8>::new();
-//        match reqwest::Client::builder()
-//            .build()
-//            .unwrap()
-//            .get(img_url)
-//            .send()
-//            {
-//                Ok(mut img) => {
-//                    img.read_to_end(&mut img_from_req).unwrap();
-//                }
-//                Err(e) => {
-//                    println!("{}", e.to_string());
-//                    continue;
-//                }
-//            }
-//        last_request_instant = Instant::now();
-////
-//        let image_rust_ori = image::load_from_memory(img_from_req.as_slice())
-//            .unwrap()
-//            .to_rgb();
-//        let temp_img_filename = "rotated_and_cropped_img.png";
-//        let mut processed_img = rotate_and_crop(image_rust_ori);
-//        processed_img.save(temp_img_filename).unwrap();
-//
-//        let nb_people = yolo.process_img().unwrap();
-//        let mut c = Cursor::new(Vec::new());
-//        let (width, height) = processed_img.dimensions();
-//        image::jpeg::JPEGEncoder::new(&mut c)
-//            .encode(&*processed_img, width, height, ColorType::RGB(8))
-//            .unwrap();
-//        c.set_position(0);
-//        let mut processed_jpg = Vec::new();
-//        File::open("processed_img.jpg")
-//            .unwrap()
-//            .read_to_end(&mut processed_jpg)
-//            .unwrap();
-//        {
-//            let mut write_lock = response_thread_copy.write().unwrap();
-//            let raw_bytes_to_send_as_b64 = base64::encode(&processed_jpg);
-//            write_lock.image_jpg_b64 = raw_bytes_to_send_as_b64;
-//            println!("Nb people = {}", nb_people);
-//            write_lock.number_of_people = nb_people;
-//        }
-//    }
-//    });
-//
+
     rocket::ignite()
         .manage(yolo)
         .mount("/", routes![index])
