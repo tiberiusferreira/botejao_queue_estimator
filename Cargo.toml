@@ -10,13 +10,13 @@ edition = "2018"
 
 failure = "0.1.6"
 
-tch = {git = "https://github.com/LaurentMazare/tch-rs.git", rev = "3704b1efd992c59f5a8eb76b0a7347a01aedc5ba"}
-imageproc = "*"
-image = "*"
+tch = "0.3"
+imageproc = "0.22.0"
+image = "0.23.12"
 rocket = {version = "0.4.2", default-features=false}
 rocket_contrib = "0.4.2"
 base64 = "0.11.0"
-reqwest = "*"
+reqwest = { version = "0.10.9", features = ["blocking"] }
 serde = {version = "*", features=["derive"]}
 serde_json = "*"
 chrono = "0.4.10"

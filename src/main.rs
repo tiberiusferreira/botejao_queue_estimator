@@ -20,6 +20,7 @@ use std::fs::File;
 use std::io::{Cursor, Read};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration};
+use chrono::{DateTime, Local};
 use tch::nn::{ModuleT};
 use tch::vision::image as tch_image;
 use tch::Tensor;
@@ -64,7 +65,7 @@ pub fn draw_rect(t: &mut Tensor, x1: i64, x2: i64, y1: i64, y2: i64) {
 
 // Assumes x1 and y1
 pub fn draw_at_x_y(t: &mut Tensor, x: i64, y: i64) {
-    let color = Tensor::of_slice(&[1., 0., 1.]).view([3, 1, 1]);
+    let color = Tensor::of_slice(&[1., 1., 0.]).view([3, 1, 1]);
 
     t.narrow(2, x, 1)
         .narrow(1, y, 1)
@@ -125,21 +126,21 @@ pub fn report(pred: &Tensor, img: &Tensor, w: i64, h: i64) -> failure::Fallible<
     let (_, initial_h, initial_w) = img.size3()?;
     let mut img = img.to_kind(tch::Kind::Float) / 255.;
     let (channels, x_dim, y_dim) = img.size3().expect("Image was not 3 dim tensor");
-    println!("ch: {:?}, x: {:?}, y: {:?}", channels, x_dim, y_dim);
+    //println!("ch: {:?}, x: {:?}, y: {:?}", channels, x_dim, y_dim);
 
     // remember that y starts at top, top is 0
     let max_y_for_given_x_to_consider_people_in_line = |x|{
         let max_y = y_dim-1;
-        let initial_y = 100;
+        let initial_y = 20; //150
         max_y - initial_y - (x as f64/3.2) as i64
     };
 
     // drawing threshold line for where to consider people in the line or in the street
-//    for x in 0..=x_dim-1{
-//        for width in 0..=3{
-//            draw_at_x_y(&mut img, x, max_y_for_given_x_to_consider_people_in_line(x) + width);
-//        }
-//    }
+    //for x in 0..=x_dim-1{
+    //    for width in 0..=3{
+    //        draw_at_x_y(&mut img, x, max_y_for_given_x_to_consider_people_in_line(x) + width);
+    //    }
+    //}
 
     let w_ratio = initial_w as f64 / w as f64;
     let h_ratio = initial_h as f64 / h as f64;
@@ -203,8 +204,9 @@ impl Yolo {
 use rocket::response::status::Custom;
 use rocket::http::Status;
 
-#[get("/")]
+#[get("/index?<id>")]
 fn index(
+    id:String,
     cached_yolo: State<Arc<RwLock<Yolo>>>,
 ) -> Result<Json<BotejaoQueueWatcherResponse>, Custom<String>> {
     let yolo = match cached_yolo.try_write(){
@@ -214,27 +216,37 @@ fn index(
                               "An image is already being processed, only one image can be processed at a time".to_string()));
         },
     };
-    let img_url = "https://webservices.prefeitura.unicamp.br/cameras/cam_ra.jpg";
+    // let img_url = "https://webservices.prefeitura.unicamp.br/cameras/cam_ra.jpg";
+    let url_path = "https://webservices.prefeitura.unicamp.br/cameras/".to_string();
+
+    let img_url = url_path + &id;
+
+    let now: DateTime<Local> = Local::now();
+    let date_str = now.format("%Y:%m:%d %H:%M:%S%:z").to_string();
+
+    print!("{} - processando img ... {}", date_str, img_url);
+
+
     let mut img_from_req = Vec::<u8>::new();
-    match reqwest::Client::builder()
+    match reqwest::blocking::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()
         .unwrap()
-        .get(img_url)
+        .get(&img_url)
         .send()
-        {
-            Ok(mut img) => {
-                img.read_to_end(&mut img_from_req).unwrap();
-            }
-            Err(e) => {
-                println!("{}", e.to_string());
-                return Err(Custom(Status::InternalServerError,
-                                  "Could not get image from camera using API (took more than 10s)".to_string()));
-            }
+    {
+        Ok(mut img) => {
+            img.read_to_end(&mut img_from_req).unwrap();
         }
+        Err(e) => {
+            println!("{}", e.to_string());
+            return Err(Custom(Status::InternalServerError,
+                              "Could not get image from camera using API (took more than 10s)".to_string()));
+        }
+    }
     let image_rust_ori = image::load_from_memory(img_from_req.as_slice())
         .unwrap()
-        .to_rgb();
+        .to_rgb8();
     let temp_img_filename = "rotated_and_cropped_img.png";
     let processed_img = rotate_and_crop(image_rust_ori);
     processed_img.save(temp_img_filename).unwrap();
@@ -242,8 +254,8 @@ fn index(
     let nb_people = yolo.process_img().unwrap();
     let mut c = Cursor::new(Vec::new());
     let (width, height) = processed_img.dimensions();
-    image::jpeg::JPEGEncoder::new(&mut c)
-        .encode(&*processed_img, width, height, ColorType::RGB(8))
+    image::jpeg::JpegEncoder::new(&mut c)
+        .encode(&*processed_img, width, height, ColorType::Rgb8)
         .unwrap();
     c.set_position(0);
     let mut processed_jpg = Vec::new();
@@ -252,7 +264,7 @@ fn index(
         .read_to_end(&mut processed_jpg)
         .unwrap();
     let raw_bytes_to_send_as_b64 = base64::encode(&processed_jpg);
-    use chrono::{DateTime, Local};
+    //use chrono::{DateTime, Local};
     let now: DateTime<Local> = Local::now();
 
     let date_str = now.format("%Y:%m:%d %H:%M:%S%:z").to_string();
@@ -274,7 +286,7 @@ struct BotejaoQueueWatcherResponse {
 pub fn rotate_and_crop(image: image::RgbImage) -> image::RgbImage {
     let mut image_rust = imageproc::geometric_transformations::rotate_about_center(
         &image,
-        0.3,
+        0.0, // 0.3, removido a rotacao da imagem, so funcionava para o RA
         Interpolation::Bicubic,
         image::Rgb([0u8, 0u8, 0u8]),
     );
